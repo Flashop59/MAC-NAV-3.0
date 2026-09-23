@@ -1,0 +1,802 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ESP32 CAN Navigation Simulator V3</title>
+<style>
+  :root {
+    --bg: #111;
+    --panel: #1b1b1b;
+    --panel2: #101010;
+    --line: #333;
+    --line2: #2a2a2a;
+    --text: #eee;
+    --muted: #a8a8a8;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: Arial, sans-serif; margin: 0; background: var(--bg); color: var(--text); }
+  .wrap { display: grid; grid-template-columns: 340px 1fr; gap: 14px; padding: 14px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+  .subpanel { background: var(--panel2); border: 1px solid var(--line2); border-radius: 10px; padding: 10px; }
+  .right { display: grid; grid-template-rows: auto auto; gap: 14px; }
+  .bottomGrid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+  h2, h3 { margin: 0 0 10px 0; }
+  label { display: block; margin: 8px 0 4px; font-size: 13px; color: #ccc; }
+  input, button { width: 100%; padding: 8px; border-radius: 8px; border: 1px solid #444; background: #0f0f0f; color: #fff; }
+  button { cursor: pointer; }
+  button:hover { background: #1f1f1f; }
+  .row2, .row3 { display: grid; gap: 8px; }
+  .row2 { grid-template-columns: 1fr 1fr; }
+  .row3 { grid-template-columns: 1fr 1fr 1fr; }
+  .btnRow { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+  .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 13px; }
+  .stat { background: #101010; border: 1px solid #2e2e2e; border-radius: 8px; padding: 8px; }
+  .k { color: #9aa0a6; font-size: 12px; }
+  .v { font-size: 17px; margin-top: 3px; }
+  .small { font-size: 12px; color: var(--muted); }
+  .mono { font-family: Consolas, monospace; }
+  canvas { width: 100%; height: 700px; background: #0a0a0a; border-radius: 10px; border: 1px solid #333; }
+  pre { white-space: pre-wrap; word-break: break-word; background: #101010; border: 1px solid #2e2e2e; border-radius: 8px; padding: 8px; height: 190px; overflow: auto; margin: 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  td { border-bottom: 1px solid #262626; padding: 6px 4px; }
+  td:first-child { color: #aeb4bb; width: 58%; }
+  .pill { display: inline-block; padding: 4px 8px; border-radius: 999px; background: #222; border: 1px solid #3a3a3a; font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="panel">
+    <h2>Simulator V3</h2>
+    <div class="small">ESP32 + MCP2515 sends CAN RPM commands. GPS + IMU decide what those RPMs should be.</div>
+
+    <label>Reference Latitude (deg)</label>
+    <input id="refLat" type="number" value="18.5204" step="0.000001">
+
+    <label>Reference Longitude (deg)</label>
+    <input id="refLon" type="number" value="73.8567" step="0.000001">
+
+    <div class="row2">
+      <div>
+        <label>Start X East (m)</label>
+        <input id="startX" type="number" value="5" step="0.1">
+      </div>
+      <div>
+        <label>Start Y North (m)</label>
+        <input id="startY" type="number" value="5" step="0.1">
+      </div>
+    </div>
+
+    <div class="row2">
+      <div>
+        <label>Target X East (m)</label>
+        <input id="targetX" type="number" value="45" step="0.1">
+      </div>
+      <div>
+        <label>Target Y North (m)</label>
+        <input id="targetY" type="number" value="35" step="0.1">
+      </div>
+    </div>
+
+    <label>Initial Heading (deg, 0 = North, 90 = East)</label>
+    <input id="startHeading" type="number" value="135" step="1">
+
+    <div class="row2">
+      <div>
+        <label>Left Device ID</label>
+        <input id="leftId" type="number" value="1" min="0" max="255">
+      </div>
+      <div>
+        <label>Right Device ID</label>
+        <input id="rightId" type="number" value="2" min="0" max="255">
+      </div>
+    </div>
+
+    <div class="row2">
+      <div>
+        <label>Base Wheel RPM</label>
+        <input id="baseRpm" type="number" value="10" step="0.1">
+      </div>
+      <div>
+        <label>Align Wheel RPM Max</label>
+        <input id="alignRpm" type="number" value="8" step="0.1">
+      </div>
+    </div>
+
+    <div class="btnRow">
+      <button id="resetBtn">Reset</button>
+      <button id="startBtn">Start / Resume</button>
+    </div>
+    <button id="pauseBtn" style="margin-top:8px;">Pause</button>
+
+    <div class="subpanel" style="margin-top:12px;">
+      <h3 style="margin-bottom:8px;">Manual Disturbance</h3>
+      <div class="small">Apply heading or position disturbance and watch the controller come back to the A→B path progressively.</div>
+      <div class="row2">
+        <div>
+          <label>Yaw Disturbance (deg)</label>
+          <input id="disturbYaw" type="number" value="15" step="1">
+        </div>
+        <div>
+          <label>Shift Disturbance (m)</label>
+          <input id="disturbShift" type="number" value="0.6" step="0.1">
+        </div>
+      </div>
+      <div class="btnRow">
+        <button id="yawLeftBtn">Rotate Left</button>
+        <button id="yawRightBtn">Rotate Right</button>
+      </div>
+      <div class="btnRow">
+        <button id="pushLeftBtn">Push Left</button>
+        <button id="pushRightBtn">Push Right</button>
+      </div>
+      <div class="btnRow">
+        <button id="pushFwdBtn">Push Forward</button>
+        <button id="pushBackBtn">Push Back</button>
+      </div>
+      <div class="small" style="margin-top:8px;">Keyboard: Q/E rotate, A/D push left/right, W/S push forward/back.</div>
+    </div>
+
+    <h3 style="margin-top:12px;">Status</h3>
+    <div class="stats" id="stats"></div>
+
+    <h3 style="margin-top:12px;">Latest CAN Frames</h3>
+    <pre id="canLog"></pre>
+  </div>
+
+  <div class="right">
+    <div class="panel">
+      <canvas id="sim" width="1100" height="700"></canvas>
+    </div>
+
+    <div class="bottomGrid">
+      <div class="panel">
+        <h3>GPS View</h3>
+        <div class="small">Simulated GPS values from the current robot position.</div>
+        <table id="gpsTable"></table>
+      </div>
+      <div class="panel">
+        <h3>IMU View</h3>
+        <div class="small">Simulated IMU values from the current robot motion.</div>
+        <table id="imuTable"></table>
+      </div>
+      <div class="panel">
+        <h3>Events</h3>
+        <div class="small">Disturbance and state log.</div>
+        <pre id="eventLog"></pre>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const cfg = {
+  wheelDiameterM: 20 * 0.0254,
+  trackWidthM: 23 * 0.0254,
+  gearRatio: 38,
+  motorMaxRpm: 1500,
+  alignTolDeg: 3,
+  stopDistanceM: 1.5,
+  alignKp: 0.18,
+  driveKp: 0.11,
+  driveKd: 0.045,
+  crossTrackGain: 3.2,
+  crossTrackLookahead: 2.4,
+  driveCorrMax: 4,
+  minTrackBaseFrac: 0.35,
+  rpmSlewPerSec: 14,
+  sourceAddress: 0x1E,
+  priority: 3,
+  pf: 0xF1,
+};
+cfg.wheelCirc = Math.PI * cfg.wheelDiameterM;
+
+const stateNames = ["WAIT_FIX", "ALIGN", "TRACK", "ARRIVED"];
+
+const robot = {
+  x: 5,
+  y: 5,
+  headingDeg: 135,
+  leftWheelRpm: 0,
+  rightWheelRpm: 0,
+  leftMotorRpm: 0,
+  rightMotorRpm: 0,
+  cmdLeftWheelRpm: 0,
+  cmdRightWheelRpm: 0,
+  state: 1,
+  distance: 0,
+  bearing: 0,
+  pathHeading: 0,
+  desiredHeading: 0,
+  error: 0,
+  crossTrackM: 0,
+  alongTrackM: 0,
+  speedMps: 0,
+  courseDeg: 0,
+  yawRateDps: 0,
+  accelForward: 0,
+  accelLateral: 0,
+};
+
+const sim = {
+  running: false,
+  dt: 0.05,
+  startX: 5,
+  startY: 5,
+  targetX: 45,
+  targetY: 35,
+  refLat: 18.5204,
+  refLon: 73.8567,
+  leftId: 1,
+  rightId: 2,
+  baseRpm: 10,
+  alignRpm: 8,
+  canLines: [],
+  trail: [],
+  events: [],
+  prevX: 5,
+  prevY: 5,
+  prevSpeed: 0,
+};
+
+const sensors = {
+  gps: {
+    lat: 0,
+    lon: 0,
+    speedMps: 0,
+    courseDeg: 0,
+    hdop: 0.8,
+    sats: 18,
+    fix: '3D FIX (SIM)',
+    xEast: 0,
+    yNorth: 0,
+  },
+  imu: {
+    yawDeg: 0,
+    gyroZDps: 0,
+    accelXMps2: 0,
+    accelYMps2: 0,
+    magHeadingDeg: 0,
+  }
+};
+
+const canvas = document.getElementById('sim');
+const ctx = canvas.getContext('2d');
+
+function clamp(x, lo, hi) { return Math.max(lo, Math.min(hi, x)); }
+function norm360(d) { while (d < 0) d += 360; while (d >= 360) d -= 360; return d; }
+function norm180(d) { while (d > 180) d -= 360; while (d < -180) d += 360; return d; }
+function deg2rad(d) { return d * Math.PI / 180; }
+function rad2deg(r) { return r * 180 / Math.PI; }
+function bearingDeg(x1, y1, x2, y2) { return norm360(rad2deg(Math.atan2(x2 - x1, y2 - y1))); }
+function distanceM(x1, y1, x2, y2) { return Math.hypot(x2 - x1, y2 - y1); }
+function rateLimit(target, current, maxStep) {
+  if (target > current + maxStep) return current + maxStep;
+  if (target < current - maxStep) return current - maxStep;
+  return target;
+}
+function projectToPath(ax, ay, bx, by, px, py) {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const L = Math.hypot(dx, dy) || 1e-9;
+  const ux = dx / L;
+  const uy = dy / L;
+  const apx = px - ax;
+  const apy = py - ay;
+  const along = apx * ux + apy * uy;
+  const cross = ux * apy - uy * apx;
+  const projX = ax + along * ux;
+  const projY = ay + along * uy;
+  return { along, cross, projX, projY, length: L, ux, uy };
+}
+function wheelToMotorRpm(wheelRpm) { return Math.round(clamp(Math.abs(wheelRpm) * cfg.gearRatio, 0, cfg.motorMaxRpm)); }
+function buildId(deviceId) {
+  return (((cfg.priority & 0x7) << 26) | (cfg.pf << 16) | ((deviceId & 0xFF) << 8) | cfg.sourceAddress) >>> 0;
+}
+function statusByte(command, brake) { return ((brake ? 1 : 0) << 2) | (command & 0x03); }
+function toRadLat(latDeg) { return latDeg * Math.PI / 180; }
+function metersToLatDeg(mNorth) { return mNorth / 111320.0; }
+function metersToLonDeg(mEast, atLatDeg) { return mEast / (111320.0 * Math.cos(toRadLat(atLatDeg))); }
+
+function logEvent(text) {
+  const stamp = new Date().toLocaleTimeString();
+  sim.events.unshift(`[${stamp}] ${text}`);
+  if (sim.events.length > 18) sim.events.pop();
+}
+
+function makeFrame(deviceId, signedWheelRpm) {
+  let cmd = 0;
+  if (Math.abs(signedWheelRpm) > 0.2) cmd = signedWheelRpm >= 0 ? 1 : 2;
+  const motorRpm = cmd === 0 ? 0 : wheelToMotorRpm(signedWheelRpm);
+  const data = [
+    motorRpm & 0xFF,
+    (motorRpm >> 8) & 0xFF,
+    cmd === 0 ? 0 : 1,
+    statusByte(cmd, false),
+    0, 0, 0, 0
+  ];
+  return {
+    id: buildId(deviceId),
+    idHex: '0x' + buildId(deviceId).toString(16).toUpperCase().padStart(8, '0'),
+    data,
+    motorRpm,
+    cmdText: cmd === 1 ? 'FWD' : cmd === 2 ? 'REV' : 'STOP'
+  };
+}
+
+function readInputs() {
+  sim.refLat = parseFloat(document.getElementById('refLat').value);
+  sim.refLon = parseFloat(document.getElementById('refLon').value);
+  sim.startX = parseFloat(document.getElementById('startX').value);
+  sim.startY = parseFloat(document.getElementById('startY').value);
+  sim.targetX = parseFloat(document.getElementById('targetX').value);
+  sim.targetY = parseFloat(document.getElementById('targetY').value);
+  sim.leftId = parseInt(document.getElementById('leftId').value, 10);
+  sim.rightId = parseInt(document.getElementById('rightId').value, 10);
+  sim.baseRpm = parseFloat(document.getElementById('baseRpm').value);
+  sim.alignRpm = parseFloat(document.getElementById('alignRpm').value);
+}
+
+function resetSim() {
+  readInputs();
+  robot.x = sim.startX;
+  robot.y = sim.startY;
+  robot.headingDeg = norm360(parseFloat(document.getElementById('startHeading').value));
+  robot.leftWheelRpm = 0;
+  robot.rightWheelRpm = 0;
+  robot.leftMotorRpm = 0;
+  robot.rightMotorRpm = 0;
+  robot.cmdLeftWheelRpm = 0;
+  robot.cmdRightWheelRpm = 0;
+  robot.state = 1;
+  robot.distance = distanceM(robot.x, robot.y, sim.targetX, sim.targetY);
+  robot.bearing = bearingDeg(robot.x, robot.y, sim.targetX, sim.targetY);
+  robot.pathHeading = bearingDeg(sim.startX, sim.startY, sim.targetX, sim.targetY);
+  robot.desiredHeading = robot.pathHeading;
+  robot.error = norm180(robot.desiredHeading - robot.headingDeg);
+  robot.crossTrackM = 0;
+  robot.alongTrackM = 0;
+  robot.speedMps = 0;
+  robot.courseDeg = robot.headingDeg;
+  robot.yawRateDps = 0;
+  robot.accelForward = 0;
+  robot.accelLateral = 0;
+  sim.prevX = robot.x;
+  sim.prevY = robot.y;
+  sim.prevSpeed = 0;
+  sim.canLines = [];
+  sim.trail = [{x: robot.x, y: robot.y}];
+  sim.events = [];
+  logEvent('Simulator reset');
+  updateSensors();
+  updateUi();
+  draw();
+}
+
+function updateSensors() {
+  sensors.gps.lat = sim.refLat + metersToLatDeg(robot.y);
+  sensors.gps.lon = sim.refLon + metersToLonDeg(robot.x, sim.refLat);
+  sensors.gps.speedMps = robot.speedMps;
+  sensors.gps.courseDeg = robot.courseDeg;
+  sensors.gps.xEast = robot.x;
+  sensors.gps.yNorth = robot.y;
+  sensors.imu.yawDeg = robot.headingDeg;
+  sensors.imu.gyroZDps = robot.yawRateDps;
+  sensors.imu.accelXMps2 = robot.accelForward;
+  sensors.imu.accelYMps2 = robot.accelLateral;
+  sensors.imu.magHeadingDeg = robot.headingDeg;
+}
+
+function controllerStep() {
+  robot.distance = distanceM(robot.x, robot.y, sim.targetX, sim.targetY);
+  robot.bearing = bearingDeg(robot.x, robot.y, sim.targetX, sim.targetY);
+  robot.pathHeading = bearingDeg(sim.startX, sim.startY, sim.targetX, sim.targetY);
+
+  const path = projectToPath(sim.startX, sim.startY, sim.targetX, sim.targetY, robot.x, robot.y);
+  robot.crossTrackM = path.cross;
+  robot.alongTrackM = path.along;
+
+  const prevState = robot.state;
+
+  if (robot.distance <= cfg.stopDistanceM) {
+    robot.state = 3;
+    robot.desiredHeading = robot.pathHeading;
+    robot.cmdLeftWheelRpm = 0;
+    robot.cmdRightWheelRpm = 0;
+  } else if (robot.state === 1) {
+    robot.desiredHeading = robot.bearing;
+    robot.error = norm180(robot.desiredHeading - robot.headingDeg);
+    const turn = clamp(robot.error * cfg.alignKp, -sim.alignRpm, sim.alignRpm);
+    robot.cmdLeftWheelRpm = turn;
+    robot.cmdRightWheelRpm = -turn;
+    if (Math.abs(robot.error) <= cfg.alignTolDeg) robot.state = 2;
+  } else if (robot.state === 2) {
+    const crossTrackHeadingDeg = rad2deg(Math.atan2(cfg.crossTrackGain * robot.crossTrackM, cfg.crossTrackLookahead));
+    robot.desiredHeading = norm360(robot.pathHeading + crossTrackHeadingDeg);
+    robot.error = norm180(robot.desiredHeading - robot.headingDeg);
+
+    const yawDamp = cfg.driveKd * robot.yawRateDps;
+    const corr = clamp(robot.error * cfg.driveKp - yawDamp, -cfg.driveCorrMax, cfg.driveCorrMax);
+
+    const errFrac = clamp(Math.abs(robot.error) / 90, 0, 1);
+    const baseFrac = 1 - (1 - cfg.minTrackBaseFrac) * errFrac;
+    const base = sim.baseRpm * baseFrac;
+
+    robot.cmdLeftWheelRpm = clamp(base + corr, 0, sim.baseRpm + cfg.driveCorrMax);
+    robot.cmdRightWheelRpm = clamp(base - corr, 0, sim.baseRpm + cfg.driveCorrMax);
+  } else {
+    robot.desiredHeading = robot.pathHeading;
+    robot.error = norm180(robot.desiredHeading - robot.headingDeg);
+    robot.cmdLeftWheelRpm = 0;
+    robot.cmdRightWheelRpm = 0;
+  }
+
+  const maxStep = cfg.rpmSlewPerSec * sim.dt;
+  robot.leftWheelRpm = rateLimit(robot.cmdLeftWheelRpm, robot.leftWheelRpm, maxStep);
+  robot.rightWheelRpm = rateLimit(robot.cmdRightWheelRpm, robot.rightWheelRpm, maxStep);
+
+  if (robot.state !== prevState) {
+    logEvent(`State changed: ${stateNames[prevState]} -> ${stateNames[robot.state]}`);
+  }
+
+  robot.leftMotorRpm = wheelToMotorRpm(robot.leftWheelRpm);
+  robot.rightMotorRpm = wheelToMotorRpm(robot.rightWheelRpm);
+
+  const leftFrame = makeFrame(sim.leftId, robot.leftWheelRpm);
+  const rightFrame = makeFrame(sim.rightId, robot.rightWheelRpm);
+  sim.canLines = [
+    `LEFT  ${leftFrame.idHex}  DATA [${leftFrame.data.map(x => x.toString().padStart(3, ' ')).join(', ')}]  ${leftFrame.cmdText}  motorRPM=${leftFrame.motorRpm}`,
+    `RIGHT ${rightFrame.idHex}  DATA [${rightFrame.data.map(x => x.toString().padStart(3, ' ')).join(', ')}]  ${rightFrame.cmdText}  motorRPM=${rightFrame.motorRpm}`
+  ];
+}
+
+function plantStep(dt) {
+  const vL = robot.leftWheelRpm * cfg.wheelCirc / 60;
+  const vR = robot.rightWheelRpm * cfg.wheelCirc / 60;
+  const v = (vL + vR) / 2;
+  const headingDot = (vL - vR) / cfg.trackWidthM;
+  const psi = deg2rad(robot.headingDeg);
+
+  const oldX = robot.x;
+  const oldY = robot.y;
+  const oldSpeed = robot.speedMps;
+
+  robot.headingDeg = norm360(robot.headingDeg + rad2deg(headingDot * dt));
+  robot.x += v * Math.sin(psi) * dt;
+  robot.y += v * Math.cos(psi) * dt;
+
+  const dx = robot.x - oldX;
+  const dy = robot.y - oldY;
+  const moved = Math.hypot(dx, dy);
+
+  robot.speedMps = v;
+  robot.courseDeg = moved > 1e-6 ? bearingDeg(oldX, oldY, robot.x, robot.y) : robot.courseDeg;
+  robot.yawRateDps = rad2deg(headingDot);
+  robot.accelForward = (robot.speedMps - oldSpeed) / dt;
+  robot.accelLateral = robot.speedMps * headingDot;
+
+  sim.trail.push({x: robot.x, y: robot.y});
+  if (sim.trail.length > 2500) sim.trail.shift();
+}
+
+function applyYawDisturbance(deltaDeg) {
+  robot.headingDeg = norm360(robot.headingDeg + deltaDeg);
+  logEvent(`Manual yaw disturbance applied: ${deltaDeg > 0 ? '+' : ''}${deltaDeg.toFixed(1)} deg`);
+  updateSensors();
+  updateUi();
+  draw();
+}
+
+function applyBodyShift(forwardM, leftM) {
+  const psi = deg2rad(robot.headingDeg);
+  const fwdX = Math.sin(psi);
+  const fwdY = Math.cos(psi);
+  const leftX = -Math.cos(psi);
+  const leftY = Math.sin(psi);
+  robot.x += forwardM * fwdX + leftM * leftX;
+  robot.y += forwardM * fwdY + leftM * leftY;
+  sim.trail.push({x: robot.x, y: robot.y});
+  if (sim.trail.length > 2500) sim.trail.shift();
+  const parts = [];
+  if (Math.abs(forwardM) > 1e-6) parts.push(`${forwardM > 0 ? 'forward' : 'back'} ${Math.abs(forwardM).toFixed(2)} m`);
+  if (Math.abs(leftM) > 1e-6) parts.push(`${leftM > 0 ? 'left' : 'right'} ${Math.abs(leftM).toFixed(2)} m`);
+  logEvent(`Manual position disturbance applied: ${parts.join(', ')}`);
+  updateSensors();
+  updateUi();
+  draw();
+}
+
+function updateUi() {
+  const stats = [
+    ['State', stateNames[robot.state]],
+    ['Distance to B (m)', robot.distance.toFixed(2)],
+    ['Bearing to B (deg)', robot.bearing.toFixed(1)],
+    ['Path Heading A→B (deg)', robot.pathHeading.toFixed(1)],
+    ['Desired Heading (deg)', robot.desiredHeading.toFixed(1)],
+    ['Heading (deg)', robot.headingDeg.toFixed(1)],
+    ['Heading Error (deg)', robot.error.toFixed(1)],
+    ['Cross-track Error (m)', robot.crossTrackM.toFixed(3)],
+    ['Left Cmd Wheel RPM', robot.cmdLeftWheelRpm.toFixed(2)],
+    ['Right Cmd Wheel RPM', robot.cmdRightWheelRpm.toFixed(2)],
+    ['Left Wheel RPM', robot.leftWheelRpm.toFixed(2)],
+    ['Right Wheel RPM', robot.rightWheelRpm.toFixed(2)],
+    ['Left Motor RPM', robot.leftMotorRpm.toFixed(0)],
+    ['Right Motor RPM', robot.rightMotorRpm.toFixed(0)],
+    ['Robot Speed (m/s)', robot.speedMps.toFixed(3)],
+    ['Track Width (m)', cfg.trackWidthM.toFixed(3)],
+    ['Wheel Circumference (m)', cfg.wheelCirc.toFixed(3)],
+    ['Gear Ratio', cfg.gearRatio.toFixed(0)]
+  ];
+  document.getElementById('stats').innerHTML = stats.map(([k,v]) => `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
+  document.getElementById('canLog').textContent = sim.canLines.join('\n');
+  document.getElementById('eventLog').textContent = sim.events.join('\n');
+
+  const gpsRows = [
+    ['Fix Status', sensors.gps.fix],
+    ['Latitude', sensors.gps.lat.toFixed(7)],
+    ['Longitude', sensors.gps.lon.toFixed(7)],
+    ['X East (m)', sensors.gps.xEast.toFixed(3)],
+    ['Y North (m)', sensors.gps.yNorth.toFixed(3)],
+    ['Speed over ground (m/s)', sensors.gps.speedMps.toFixed(3)],
+    ['Course over ground (deg)', sensors.gps.courseDeg.toFixed(2)],
+    ['Bearing to target (deg)', robot.bearing.toFixed(2)],
+    ['Path heading A→B (deg)', robot.pathHeading.toFixed(2)],
+    ['Distance to target (m)', robot.distance.toFixed(2)],
+    ['Cross-track error (m)', robot.crossTrackM.toFixed(3)],
+    ['Along-track progress (m)', robot.alongTrackM.toFixed(2)],
+    ['HDOP', sensors.gps.hdop.toFixed(1)],
+    ['Satellites', String(sensors.gps.sats)],
+  ];
+  document.getElementById('gpsTable').innerHTML = gpsRows.map(([k, v]) => `<tr><td>${k}</td><td class="mono">${v}</td></tr>`).join('');
+
+  const imuRows = [
+    ['Yaw / Heading (deg)', sensors.imu.yawDeg.toFixed(2)],
+    ['Gyro Z (deg/s)', sensors.imu.gyroZDps.toFixed(2)],
+    ['Accel X forward (m/s²)', sensors.imu.accelXMps2.toFixed(3)],
+    ['Accel Y lateral (m/s²)', sensors.imu.accelYMps2.toFixed(3)],
+    ['Mag Heading (deg)', sensors.imu.magHeadingDeg.toFixed(2)],
+    ['Desired Heading (deg)', robot.desiredHeading.toFixed(2)],
+    ['Heading Error (deg)', robot.error.toFixed(2)],
+    ['Bearing current→B (deg)', robot.bearing.toFixed(2)],
+    ['Path heading A→B (deg)', robot.pathHeading.toFixed(2)],
+    ['Cross-track error (m)', robot.crossTrackM.toFixed(3)],
+    ['State', stateNames[robot.state]],
+  ];
+  document.getElementById('imuTable').innerHTML = imuRows.map(([k, v]) => `<tr><td>${k}</td><td class="mono">${v}</td></tr>`).join('');
+}
+
+function worldBounds() {
+  const pad = 6;
+  const xs = sim.trail.map(p => p.x);
+  const ys = sim.trail.map(p => p.y);
+  const minX = Math.min(sim.startX, sim.targetX, robot.x, ...xs) - pad;
+  const maxX = Math.max(sim.startX, sim.targetX, robot.x, ...xs) + pad;
+  const minY = Math.min(sim.startY, sim.targetY, robot.y, ...ys) - pad;
+  const maxY = Math.max(sim.startY, sim.targetY, robot.y, ...ys) + pad;
+  return {minX, maxX, minY, maxY};
+}
+
+function toCanvas(x, y, b) {
+  const w = canvas.width - 60;
+  const h = canvas.height - 60;
+  const sx = w / Math.max(1, b.maxX - b.minX);
+  const sy = h / Math.max(1, b.maxY - b.minY);
+  const s = Math.min(sx, sy);
+  return {
+    x: 30 + (x - b.minX) * s,
+    y: canvas.height - 30 - (y - b.minY) * s,
+    s
+  };
+}
+
+function drawRobot(px, py, headingDeg, scale) {
+  const r = 0.75 * scale;
+  const psi = deg2rad(headingDeg);
+  const p1 = { x: px + Math.sin(psi) * r * 1.35, y: py - Math.cos(psi) * r * 1.35 };
+  const p2 = { x: px + Math.sin(psi + 2.45) * r, y: py - Math.cos(psi + 2.45) * r };
+  const p3 = { x: px + Math.sin(psi - 2.45) * r, y: py - Math.cos(psi - 2.45) * r };
+  ctx.beginPath();
+  ctx.moveTo(p1.x, p1.y);
+  ctx.lineTo(p2.x, p2.y);
+  ctx.lineTo(p3.x, p3.y);
+  ctx.closePath();
+  ctx.fillStyle = '#ff9f1c';
+  ctx.fill();
+  ctx.strokeStyle = '#111';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+}
+
+function drawCompass(cx, cy, radius) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.strokeStyle = '#555';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.arc(0, 0, radius, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ['N','E','S','W'].forEach((label, idx) => {
+    const ang = deg2rad(idx * 90);
+    const x = Math.sin(ang) * radius * 0.85;
+    const y = -Math.cos(ang) * radius * 0.85;
+    ctx.fillStyle = '#ddd';
+    ctx.fillText(label, x - 4, y + 4);
+  });
+
+  const tgt = deg2rad(robot.bearing);
+  const hdg = deg2rad(robot.headingDeg);
+
+  ctx.strokeStyle = '#2f7';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(Math.sin(tgt) * radius * 0.85, -Math.cos(tgt) * radius * 0.85);
+  ctx.stroke();
+
+  ctx.strokeStyle = '#ff9f1c';
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(Math.sin(hdg) * radius * 0.70, -Math.cos(hdg) * radius * 0.70);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawLegend(x, y) {
+  const items = [
+    ['#2f7', 'Ideal path A→B'],
+    ['#46a3ff', 'Actual robot path'],
+    ['#ffd166', 'Current bearing to B'],
+    ['#ff66c4', 'Desired heading'],
+    ['#8ecae6', 'Cross-track drop line'],
+    ['#ff9f1c', 'Robot heading'],
+  ];
+  items.forEach((it, i) => {
+    ctx.strokeStyle = it[0];
+    ctx.fillStyle = it[0];
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(x, y + i * 18);
+    ctx.lineTo(x + 18, y + i * 18);
+    ctx.stroke();
+    ctx.fillStyle = '#ddd';
+    ctx.fillText(it[1], x + 24, y + 4 + i * 18);
+  });
+}
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const b = worldBounds();
+  const sA = toCanvas(sim.startX, sim.startY, b);
+  const sB = toCanvas(sim.targetX, sim.targetY, b);
+  const sR = toCanvas(robot.x, robot.y, b);
+
+  ctx.strokeStyle = '#2b2b2b';
+  ctx.lineWidth = 1;
+  for (let gx = Math.floor(b.minX); gx <= Math.ceil(b.maxX); gx += 5) {
+    const p1 = toCanvas(gx, b.minY, b);
+    const p2 = toCanvas(gx, b.maxY, b);
+    ctx.beginPath();
+    ctx.moveTo(p1.x, p1.y);
+    ctx.lineTo(p2.x, p2.y);
+    ctx.stroke();
+  }
+  for (let gy = Math.floor(b.minY); gy <= Math.ceil(b.maxY); gy += 5) {
+    const p1 = toCanvas(b.minX, gy, b);
+    const p2 = toCanvas(b.maxX, gy, b);
+    ctx.beginPath();
+    ctx.moveTo(p1.x, p1.y);
+    ctx.lineTo(p2.x, p2.y);
+    ctx.stroke();
+  }
+
+  ctx.strokeStyle = '#2f7';
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.moveTo(sA.x, sA.y);
+  ctx.lineTo(sB.x, sB.y);
+  ctx.stroke();
+
+  ctx.strokeStyle = '#46a3ff';
+  ctx.lineWidth = 1.8;
+  ctx.beginPath();
+  sim.trail.forEach((p, i) => {
+    const c = toCanvas(p.x, p.y, b);
+    if (i === 0) ctx.moveTo(c.x, c.y); else ctx.lineTo(c.x, c.y);
+  });
+  ctx.stroke();
+
+  ctx.fillStyle = '#0f0';
+  ctx.beginPath();
+  ctx.arc(sA.x, sA.y, 7, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.fillText('A', sA.x + 10, sA.y - 10);
+
+  ctx.fillStyle = '#f44';
+  ctx.beginPath();
+  ctx.arc(sB.x, sB.y, 7, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.fillText('B', sB.x + 10, sB.y - 10);
+
+  ctx.strokeStyle = '#ffd166';
+  ctx.setLineDash([6, 6]);
+  ctx.beginPath();
+  ctx.moveTo(sR.x, sR.y);
+  ctx.lineTo(sB.x, sB.y);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  const proj = projectToPath(sim.startX, sim.startY, sim.targetX, sim.targetY, robot.x, robot.y);
+  const sP = toCanvas(proj.projX, proj.projY, b);
+  ctx.strokeStyle = '#8ecae6';
+  ctx.setLineDash([4, 4]);
+  ctx.beginPath();
+  ctx.moveTo(sR.x, sR.y);
+  ctx.lineTo(sP.x, sP.y);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  const desiredPsi = deg2rad(robot.desiredHeading);
+  ctx.strokeStyle = '#ff66c4';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(sR.x, sR.y);
+  ctx.lineTo(sR.x + Math.sin(desiredPsi) * 55, sR.y - Math.cos(desiredPsi) * 55);
+  ctx.stroke();
+
+  drawRobot(sR.x, sR.y, robot.headingDeg, sR.s);
+  drawLegend(40, 25);
+
+  ctx.fillStyle = '#ddd';
+  ctx.fillText(`Robot X=${robot.x.toFixed(2)} m, Y=${robot.y.toFixed(2)} m`, 40, canvas.height - 60);
+  ctx.fillText(`Heading=${robot.headingDeg.toFixed(1)} deg, Desired=${robot.desiredHeading.toFixed(1)} deg, Bearing to B=${robot.bearing.toFixed(1)} deg`, 40, canvas.height - 42);
+  ctx.fillText(`Cross-track=${robot.crossTrackM.toFixed(3)} m, L wheel=${robot.leftWheelRpm.toFixed(2)} rpm, R wheel=${robot.rightWheelRpm.toFixed(2)} rpm`, 40, canvas.height - 24);
+
+  drawCompass(canvas.width - 110, 95, 58);
+  ctx.fillStyle = '#ddd';
+  ctx.fillText('Compass view', canvas.width - 145, 170);
+}
+
+function tick() {
+  if (sim.running) {
+    controllerStep();
+    plantStep(sim.dt);
+    updateSensors();
+    updateUi();
+    draw();
+  }
+  requestAnimationFrame(tick);
+}
+
+function getYawDisturb() { return parseFloat(document.getElementById('disturbYaw').value) || 0; }
+function getShiftDisturb() { return parseFloat(document.getElementById('disturbShift').value) || 0; }
+
+document.getElementById('resetBtn').onclick = () => { sim.running = false; resetSim(); };
+document.getElementById('startBtn').onclick = () => { readInputs(); sim.running = true; logEvent('Simulation started/resumed'); };
+document.getElementById('pauseBtn').onclick = () => { sim.running = false; logEvent('Simulation paused'); };
+
+document.getElementById('yawLeftBtn').onclick = () => applyYawDisturbance(-getYawDisturb());
+document.getElementById('yawRightBtn').onclick = () => applyYawDisturbance(+getYawDisturb());
+document.getElementById('pushLeftBtn').onclick = () => applyBodyShift(0, +getShiftDisturb());
+document.getElementById('pushRightBtn').onclick = () => applyBodyShift(0, -getShiftDisturb());
+document.getElementById('pushFwdBtn').onclick = () => applyBodyShift(+getShiftDisturb(), 0);
+document.getElementById('pushBackBtn').onclick = () => applyBodyShift(-getShiftDisturb(), 0);
+
+document.addEventListener('keydown', (e) => {
+  if (['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
+  const key = e.key.toLowerCase();
+  if (key === 'q') applyYawDisturbance(-getYawDisturb());
+  else if (key === 'e') applyYawDisturbance(+getYawDisturb());
+  else if (key === 'a') applyBodyShift(0, +getShiftDisturb());
+  else if (key === 'd') applyBodyShift(0, -getShiftDisturb());
+  else if (key === 'w') applyBodyShift(+getShiftDisturb(), 0);
+  else if (key === 's') applyBodyShift(-getShiftDisturb(), 0);
+});
+
+resetSim();
+tick();
+</script>
+</body>
+</html>
